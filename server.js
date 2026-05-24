@@ -10,17 +10,55 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── DB CONFIG ─────────────────────────────────────────────────────────────
-// Railway injeta automaticamente: MYSQLHOST, MYSQLUSER, MYSQLPASSWORD,
-// MYSQLDATABASE, MYSQLPORT quando você adiciona o plugin MySQL.
-// Para rodar local, crie um arquivo .env com as variáveis DB_HOST etc.
-const dbConfig = {
-  host:     process.env.MYSQLHOST     || process.env.DB_HOST     || 'localhost',
-  user:     process.env.MYSQLUSER     || process.env.DB_USER     || 'root',
-  password: process.env.MYSQLPASSWORD || process.env.DB_PASS     || '',
-  database: process.env.MYSQLDATABASE || process.env.DB_NAME     || 'sistema_lacres',
-  port:     process.env.MYSQLPORT     || process.env.DB_PORT     || 3306,
-  ssl: process.env.MYSQLHOST ? { rejectUnauthorized: false } : undefined,
-};
+// Suporta 3 formas de configuração:
+//  1. MYSQL_URL  → URL completa (Railway moderno injeta isso)
+//  2. MYSQLHOST + MYSQLUSER + ... (Railway legado)
+//  3. DB_HOST + DB_USER + ...     (local / .env)
+
+function parseDbConfig() {
+  // Forma 1: URL completa  mysql://user:pass@host:port/database
+  const url = process.env.MYSQL_URL || process.env.DATABASE_URL || process.env.MYSQL_PRIVATE_URL;
+  if (url) {
+    try {
+      const u = new URL(url);
+      console.log('🔌 Conectando via MYSQL_URL:', u.hostname);
+      return {
+        host:     u.hostname,
+        user:     u.username,
+        password: u.password,
+        database: u.pathname.replace('/', ''),
+        port:     parseInt(u.port) || 3306,
+        ssl:      { rejectUnauthorized: false },
+      };
+    } catch (e) {
+      console.warn('Erro ao parsear MYSQL_URL:', e.message);
+    }
+  }
+  // Forma 2: variáveis separadas do Railway
+  if (process.env.MYSQLHOST) {
+    console.log('🔌 Conectando via MYSQLHOST:', process.env.MYSQLHOST);
+    return {
+      host:     process.env.MYSQLHOST,
+      user:     process.env.MYSQLUSER,
+      password: process.env.MYSQLPASSWORD,
+      database: process.env.MYSQLDATABASE,
+      port:     parseInt(process.env.MYSQLPORT) || 3306,
+      ssl:      { rejectUnauthorized: false },
+    };
+  }
+  // Forma 3: local
+  console.log('🔌 Conectando localmente');
+  return {
+    host:     process.env.DB_HOST     || 'localhost',
+    user:     process.env.DB_USER     || 'root',
+    password: process.env.DB_PASS     || '',
+    database: process.env.DB_NAME     || 'sistema_lacres',
+    port:     parseInt(process.env.DB_PORT) || 3306,
+  };
+}
+
+const dbConfig = parseDbConfig();
+console.log('📦 DB config:', { host: dbConfig.host, user: dbConfig.user, database: dbConfig.database, port: dbConfig.port });
 
 let db;
 async function getDb() {
@@ -34,7 +72,7 @@ async function getDb() {
 async function initDb() {
   // No Railway o banco já existe — pula o CREATE DATABASE.
   // Localmente tenta criar caso não exista.
-  if (!process.env.MYSQLHOST) {
+  if (!process.env.MYSQLHOST && !process.env.MYSQL_URL && !process.env.DATABASE_URL) {
     try {
       const conn = await mysql.createConnection({
         host: dbConfig.host, user: dbConfig.user,
